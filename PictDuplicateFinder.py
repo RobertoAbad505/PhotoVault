@@ -2,6 +2,12 @@ import os
 import hashlib
 import shutil
 
+EXCLUDED_DIRS = {
+    "formats",
+    "Duplicados_detectados",
+    "Duplicados_Eliminados"
+}
+
 def hash_file(file_path):
     """Genera un hash MD5 para comparar archivos por contenido."""
     hash_md5 = hashlib.md5()
@@ -14,16 +20,21 @@ def hash_file(file_path):
         return None
     return hash_md5.hexdigest()
 
+
 def find_and_remove_duplicates(source_dir, backup_dir):
-    """Detecta archivos duplicados, los mueve al backup_dir y excluye ese directorio."""
-    
+    """Detecta archivos duplicados y los mueve a una carpeta de respaldo."""
+
+    source_dir = os.path.abspath(source_dir)
+    backup_dir = os.path.abspath(backup_dir)
+
     print(f"🔍 Buscando duplicados en: {source_dir}")
     print(f"📦 Duplicados se moverán a: {backup_dir}\n")
+
     # Crear carpeta de respaldo y archivo .noindex
     os.makedirs(backup_dir, exist_ok=True)
     noindex_path = os.path.join(backup_dir, ".noindex")
     if not os.path.exists(noindex_path):
-        open(noindex_path, 'a').close()
+        open(noindex_path, "a").close()
         print(f"🛡️ Carpeta marcada como no indexable: {backup_dir}\n")
 
     hashes = {}
@@ -31,12 +42,15 @@ def find_and_remove_duplicates(source_dir, backup_dir):
     moved_files = 0
 
     for root, dirs, files in os.walk(source_dir):
-        # Excluir el directorio de respaldo del análisis
-        if backup_dir in root:
-            continue
+        # Excluir carpetas NO deseadas modificando dirs
+        dirs[:] = [
+            d for d in dirs
+            if d not in EXCLUDED_DIRS
+        ]
 
         for filename in files:
             file_path = os.path.join(root, filename)
+
             if not os.path.isfile(file_path):
                 continue
 
@@ -44,16 +58,16 @@ def find_and_remove_duplicates(source_dir, backup_dir):
             if not file_hash:
                 continue
 
-            # Si el hash ya existe, es un duplicado
             if file_hash in hashes:
                 duplicates_found += 1
                 dest_path = os.path.join(backup_dir, filename)
 
-                # Evitar sobrescribir si ya existe un archivo con el mismo nombre
                 counter = 1
                 while os.path.exists(dest_path):
                     name, ext = os.path.splitext(filename)
-                    dest_path = os.path.join(backup_dir, f"{name}_{counter}{ext}")
+                    dest_path = os.path.join(
+                        backup_dir, f"{name}_{counter}{ext}"
+                    )
                     counter += 1
 
                 try:
