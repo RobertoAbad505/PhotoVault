@@ -1,84 +1,105 @@
-import subprocess, sys, os
-from PicSortType import organize_photos_by_type
-from PictDuplicateFinder import find_and_remove_duplicates
-from analyze_photos import analyze_directory, print_report
-from delete_duplicates import delete_all_duplicates
+import sys
+from Core.orchestrator import PipelineOrchestrator
 
-# Rutas base (puedes modificarlas aquí)
-SOURCE_DIR = r"/Users/RobertoAbad/Pictures"
-OUTPUT_DIR = r"/Users/RobertoAbad/Pictures/formats/Duplicados_detectados"
-BACKUP_DIR = r"/Users/RobertoAbad/Pictures/formats/Duplicados_Eliminados"
 PICTURES_DIR = "/Users/RobertoAbad/Pictures"
-DUPLICATES_DIR = os.path.join(PICTURES_DIR, "formats", "Duplicados_Eliminados")
 
-def clear_console():
-    os.system('cls' if os.name == 'nt' else 'clear')
 
-def main_menu():
-    while True:
-        clear_console()
-        print("=" * 50)
-        print("""
-==================================================
-📸 PHOTO ORGANIZER MENU
-==================================================
-1. Organizar fotos por tipo (RAW, JPG, PNG, etc.)
-2. Detectar y limpiar duplicados
-3. Reporte de archivos
-4. Eliminar TODOS los duplicados
-5. Visualizar folder de duplicados
-6. Salir
-==================================================
-            """)
-        print("=" * 50)
-        choice = input("Selecciona una opción (1-6): ")
+def console_event_handler(event: dict):
+    """
+    Maneja todos los eventos emitidos por el pipeline.
+    """
+    event_type = event.get("type")
 
-        if choice == '1':
-            print("\nEjecutando organización por tipo...\n")
-            organize_photos_by_type(SOURCE_DIR, OUTPUT_DIR)
-            input("\n✅ Proceso terminado. Presiona ENTER para continuar...")
-        elif choice == '2':
-            print("\nBuscando duplicados...\n")
-            find_and_remove_duplicates(SOURCE_DIR, BACKUP_DIR)
-            open_folder(BACKUP_DIR)
-            input("\n✅ Limpieza completada. Presiona ENTER para continuar...")
-        elif choice == '3':
-            print("\n📊 Analizando resultados...\n")
-            report = analyze_directory(BACKUP_DIR)
-            print_report("REPORTE DE DUPLICADOS ELIMINADOS", report)
-            input("\nPresiona ENTER para continuar...")
-        elif option == "4":
-            confirm = input(
-                "\n⚠️ ESTA ACCIÓN ES IRREVERSIBLE ⚠️\n"
-                "Se eliminarán TODOS los archivos en 'Duplicados_Eliminados'.\n"
-                "¿Deseas continuar? (yes/no): "
-            )
+    if event_type == "pipeline_started":
+        print("\n🚀 Pipeline iniciado\n")
 
-            if confirm.lower() == "yes":
-                delete_all_duplicates(DUPLICATES_DIR)
-            else:
-                print("❎ Operación cancelada.")
+    elif event_type == "step_started":
+        print(f"\n▶️ Iniciando paso: {event['step']}")
 
-            input("\nPresiona ENTER para continuar...")
-        elif choice == '5':
-            open_folder(BACKUP_DIR)
-            sys.exit()
-        elif choice == '6':
-            print("Saliendo del programa. 👋")
-            sys.exit()
-        else:
-            input("Opción inválida. Presiona ENTER para intentar nuevamente.")
+    elif event_type == "step_completed":
+        print(f"✅ Paso completado: {event['step']}")
 
-def open_folder(path):
-    """Abre un directorio según el sistema operativo."""
-    if sys.platform == "darwin":  # macOS
-        subprocess.run(["open", path])
-    elif sys.platform == "win32":  # Windows
-        os.startfile(path)
-    elif sys.platform.startswith("linux"):  # Linux
-        subprocess.run(["xdg-open", path])
-    else:
-        print(f"⚠️ No se puede abrir automáticamente en este sistema: {sys.platform}")
+    elif event_type == "scan_progress":
+        print(
+            f"📂 Escaneados: {event['processed']} | "
+            f"Archivos válidos: {event['accepted']}",
+            end="\r"
+        )
+
+    elif event_type == "duplicate_progress":
+        print(
+            f"🔍 Procesados: {event['processed']} | "
+            f"Únicos: {event['unique']} | "
+            f"Duplicados: {event['duplicates']}",
+            end="\r"
+        )
+
+    elif event_type == "duplicates_report_ready":
+        report = event["report"]
+        print("\n\n📊 REPORTE DE DUPLICADOS")
+        print("-" * 50)
+        print(f"Total archivos : {report['total_files']}")
+        print(f"Total tamaño   : {report['total_size'] / (1024**3):.2f} GB")
+
+        print("\nPor tipo:")
+        for ext, data in sorted(
+            report["by_extension"].items(),
+            key=lambda x: x[1]["size"],
+            reverse=True
+        ):
+            size_gb = data["size"] / (1024**3)
+            print(f"{ext:8} → {data['count']:6} archivos | {size_gb:6.2f} GB")
+
+    elif event_type == "organize_moved":
+        print(f"📁 Movido: {event['source']} → {event['destination']}")
+
+    elif event_type == "pipeline_completed":
+        print("\n🎉 Pipeline completado con éxito")
+
+    elif event_type == "hash_error":
+        print(f"\n⚠️ Error leyendo {event['path']}")
+
+    elif event_type == "organize_error":
+        print(f"\n❌ Error moviendo {event['source']}")
+
+    elif event_type == "await_user_decision":
+        # El CLI decide fuera
+        pass
+
+
+def run_cli():
+    orchestrator = PipelineOrchestrator(
+        base_dir=PICTURES_DIR,
+        on_event=console_event_handler
+    )
+
+    pipeline = orchestrator.run()
+
+    try:
+        for step in pipeline:
+            if step == "await_decision_scan":
+                input("\n📊 Escaneo completo. ENTER para continuar...")
+
+            elif step == "await_decision_delete":
+                confirm = input(
+                    "\n⚠️ ¿Deseas ELIMINAR duplicados? (yes/no): "
+                )
+                if confirm.lower() != "yes":
+                    print("❎ Eliminación cancelada. Fin del proceso.")
+                    break
+
+            elif step == "await_decision_organize":
+                confirm = input(
+                    "\n📁 ¿Deseas organizar por Año/Mes/RAW? (yes/no): "
+                )
+                if confirm.lower() != "yes":
+                    print("❎ Organización cancelada. Fin del proceso.")
+                    break
+
+    except KeyboardInterrupt:
+        print("\n⛔ Proceso interrumpido por el usuario.")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    main_menu()
+    run_cli()
